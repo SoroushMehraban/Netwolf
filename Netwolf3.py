@@ -5,7 +5,7 @@ from collections import OrderedDict
 from time import sleep
 
 DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
-DISCOVERY_FILE_NAME = "Netwolf1.json"
+DISCOVERY_FILE_NAME = "Netwolf3.json"
 
 name, address, port = 0, 0, 0  # will be set in function "get_host_info_by_user"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
