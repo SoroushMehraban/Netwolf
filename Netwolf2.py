@@ -3,6 +3,7 @@ import threading
 import json
 from collections import OrderedDict
 from time import sleep
+import subprocess
 
 DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
 DISCOVERY_FILE_NAME = "Netwolf2.json"
@@ -11,26 +12,88 @@ name, address, port = 0, 0, 0  # will be set in function "get_host_info_by_user"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
 
 
+def find_local_IPv4():
+    local_IPv4 = ""
+
+    try:
+        output = subprocess.run(['ipconfig', '/all'], stdout=subprocess.PIPE)
+        output_str = output.stdout.decode("utf-8")
+        try:
+            starting_point = output_str.split("Wireless LAN adapter Wi-Fi")[1].split("IPv4 Address")[1].split(": ")[1]
+        except IndexError:
+            return None
+        for char in starting_point:
+            if char.isdigit() or char == '.':
+                local_IPv4 += char
+            else:
+                break
+    except FileNotFoundError:
+        try:
+            output = subprocess.run(['ifconfig'], stdout=subprocess.PIPE)
+            output_str = output.stdout.decode("utf-8")
+            starting_point = ""
+            try:
+                starting_point = output_str.split("wlo")[1].split("inet ")[1]
+            except IndexError:
+                return None
+            for char in starting_point:
+                if char.isdigit() or char == '.':
+                    local_IPv4 += char
+                else:
+                    break
+        except FileNotFoundError:
+            print("In order to find your Wifi IPv4 automatically, Please install ifconfig in your OS then run this program again(command: sudo apt install net-tools)")
+            return None
+
+    return local_IPv4
+
+
 def get_host_info_by_user():
     global name, address, port
+    IPv4 = find_local_IPv4()
 
     print("Enter your name in cluster:")
     name = input("> ")
 
-    print("Select your host:")
-    print("1) local host  2) choose manually")
-    host_mode = int(input("> "))
-    if host_mode == 1:
-        address = 'localhost'
-    else:
-        print("Enter your host address:")
-        address = input(">")
+    print("Select your host address:")
+    if IPv4 is None:
+        print("1) local host  2) choose manually")
 
-    print("Enter port that it listens by (it should be greater than 1023): ")
-    port = int(input("> "))
-    while port <= 1023:
-        print("Wrong input, please enter port greater than 1023: ")
+        while True:
+            host_mode = int(input("> "))
+            if host_mode == 1:
+                address = 'localhost'
+                break
+            elif host_mode == 2:
+                print("Enter your host address:")
+                address = input(">")
+                break
+
+        print("Enter port that it listens by (it should be greater than 1023): ")
         port = int(input("> "))
+        while port <= 1023:
+            print("Wrong input, please enter port greater than 1023: ")
+            port = int(input("> "))
+    else:
+        print("1) local host  2) your WiFi IPv4({}) 3) choose manually".format(IPv4))
+        while True:
+            host_mode = int(input("> "))
+            if host_mode == 1:
+                address = 'localhost'
+                break
+            elif host_mode == 2:
+                address = IPv4
+                break
+            elif host_mode == 3:
+                print("Enter your host address:")
+                address = input(">")
+                break
+
+        print("Enter port that it listens by (it should be greater than 1023): ")
+        port = int(input("> "))
+        while port <= 1023:
+            print("Wrong input, please enter port greater than 1023: ")
+            port = int(input("> "))
 
 
 def start_discovery_server():
