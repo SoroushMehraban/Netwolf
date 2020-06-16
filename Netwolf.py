@@ -2,7 +2,7 @@ import socket
 import threading
 import json
 from collections import OrderedDict
-from time import sleep
+from time import sleep, time
 import subprocess
 import os
 
@@ -10,9 +10,15 @@ DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
 DISCOVERY_FILE_NAME = "Netwolf1.json"
 OUR_FILE_DIRECTORY = 'N1'
 discovery_message_delay = 0
+get_message_delay = 0
+contain_list = {}
 
 name, address, port = 0, 0, 0  # will be set in function "get_host_info_by_user"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
+
+
+def current_milli_time():
+    return int(round(time() * 1000))
 
 
 def find_Wifi_IPv4():
@@ -53,7 +59,7 @@ def find_Wifi_IPv4():
 
 
 def get_host_info_by_user():
-    global name, address, port, discovery_message_delay
+    global name, address, port, discovery_message_delay, get_message_delay
     IPv4 = find_Wifi_IPv4()
 
     print("Enter your name in cluster:")
@@ -99,6 +105,12 @@ def get_host_info_by_user():
         print("Time delay should be greater than 0:")
         discovery_message_delay = input("> ")
 
+    print("Enter time delay (in sec) for waiting response of get message:")
+    get_message_delay = int(input("> "))
+    while get_message_delay <= 0:
+        print("Time delay should be greater than 0:")
+        get_message_delay = input("> ")
+
 
 def is_discovery_between_physical_machines(received_cluster):
     if address == "localhost":  # if we are in a local host, then it means that it's not between machines
@@ -119,7 +131,7 @@ def get_first(ordered_dict):
 
 def add_our_address_to_first(sending_cluster):
     sending_cluster.update({name: "{}:{}".format(address, port)})
-    sending_cluster.move_to_end(name, last=False)
+    sending_cluster.move_to_end(name, last=False)  # send updated value to first of ordered dict
 
 
 def open_file():
@@ -168,18 +180,34 @@ def start_UDP_server():
         if msg_str[0:3] == 'get':
             print("[MESSAGE RECEIVED] {}".format(msg))
             threading.Thread(target=handle_get_msg, args=[msg_str]).start()
+        elif msg_str[0:7] == 'contain':
+            print("[MESSAGE RECEIVED] {}".format(msg))
+            threading.Thread(target=handle_contain_msg, args=[msg_str]).start()
         else:
             threading.Thread(target=handle_discovery_msg, args=[msg_str]).start()
 
 
+def handle_contain_msg(msg):
+    global contain_list
+
+    receive_time = current_milli_time()
+
+    node_address, node_port = msg.split(" ")[1].split(":")
+    node_info = "{}:{}".format(node_address, node_port)
+
+    contain_list[node_info] = receive_time
+
+
 def handle_get_msg(msg):
-    msg_list = msg.split("get ")
-    if len(msg_list) < 2:
+    msg_list = msg.split(" ")
+    if len(msg_list) != 3:
         return
     file_name = msg_list[1]
     files_list = os.listdir(OUR_FILE_DIRECTORY)
     if files_list.__contains__(file_name):
-        print("I have it!")
+        node_address, node_port = msg_list[2].split(":")
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.sendto(bytes("contain {}:{}".format(address, port), 'utf-8'), (node_address, int(node_port)))
     else:
         print("I Don't have it!")
 
@@ -230,6 +258,8 @@ def start_discovery_client():
 
 
 def start_client_interface():
+    global contain_list
+
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     while True:
         client_request = input("> ")
@@ -241,9 +271,13 @@ def start_client_interface():
             if len(client_request_list) > 1:
                 cluster = open_file()
 
+                contain_list = {}
                 for node in cluster:
                     node_address, node_port = cluster[node].split(":")
-                    client.sendto(bytes(client_request, 'utf-8'), (node_address, int(node_port)))
+                    client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
+                                  (node_address, int(node_port)))
+                sleep(get_message_delay)
+                print(contain_list)
 
 
 if __name__ == "__main__":
