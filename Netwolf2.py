@@ -4,15 +4,18 @@ import json
 from collections import OrderedDict
 from time import sleep
 import subprocess
+import os
 
 DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
 DISCOVERY_FILE_NAME = "Netwolf2.json"
+OUR_FILE_DIRECTORY = 'N2'
+discovery_message_delay = 0
 
 name, address, port = 0, 0, 0  # will be set in function "get_host_info_by_user"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
 
 
-def find_local_IPv4():
+def find_Wifi_IPv4():
     local_IPv4 = ""
 
     try:
@@ -42,15 +45,16 @@ def find_local_IPv4():
                 else:
                     break
         except FileNotFoundError:
-            print("In order to find your Wifi IPv4 automatically, Please install ifconfig in your OS then run this program again(command: sudo apt install net-tools)")
+            print(
+                "In order to find your Wifi IPv4 automatically, Please install ifconfig in your OS then run this program again(command: sudo apt install net-tools)")
             return None
 
     return local_IPv4
 
 
 def get_host_info_by_user():
-    global name, address, port
-    IPv4 = find_local_IPv4()
+    global name, address, port, discovery_message_delay
+    IPv4 = find_Wifi_IPv4()
 
     print("Enter your name in cluster:")
     name = input("> ")
@@ -68,12 +72,6 @@ def get_host_info_by_user():
                 print("Enter your host address:")
                 address = input(">")
                 break
-
-        print("Enter port that it listens by (it should be greater than 1023): ")
-        port = int(input("> "))
-        while port <= 1023:
-            print("Wrong input, please enter port greater than 1023: ")
-            port = int(input("> "))
     else:
         print("1) local host  2) your WiFi IPv4({}) 3) choose manually".format(IPv4))
         while True:
@@ -89,43 +87,17 @@ def get_host_info_by_user():
                 address = input(">")
                 break
 
-        print("Enter port that it listens by (it should be greater than 1023): ")
+    print("Enter port that it listens by (it should be greater than 1023): ")
+    port = int(input("> "))
+    while port <= 1023:
+        print("Wrong input, please enter port greater than 1023: ")
         port = int(input("> "))
-        while port <= 1023:
-            print("Wrong input, please enter port greater than 1023: ")
-            port = int(input("> "))
 
-
-def start_discovery_server():
-    host_info = (address, port)
-    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server.bind(host_info)
-    # print("[SERVER LISTENS] address:{} | port:{}".format(address, port))
-    while True:
-        msg, addr = server.recvfrom(DISCOVERY_MSG_LENGTH_SIZE)
-        #print("[MESSAGE RECEIVED] {}".format(msg))
-        threading.Thread(target=handle_received_msg, args=[msg]).start()
-
-
-def handle_received_msg(msg):
-    our_cluster = open_file()
-
-    received_cluster = json.loads(msg.decode("utf-8"), object_pairs_hook=OrderedDict)
-    received_cluster.pop(name)  # remove our node from received cluster
-
-    machine_name = is_discovery_between_physical_machines(received_cluster)
-
-    if machine_name is False:
-        for node in received_cluster:
-            our_cluster[node] = received_cluster[node]
-    else:
-        sender_server_info = received_cluster.pop(machine_name)
-        our_cluster[machine_name] = {
-            "address": "{}".format(sender_server_info),
-            "cluster": received_cluster
-        }
-
-    update_file(our_cluster)
+    print("Enter time delay (in sec) for sending discovery message:")
+    discovery_message_delay = int(input("> "))
+    while discovery_message_delay <= 0:
+        print("Time delay should be greater than 0:")
+        discovery_message_delay = input("> ")
 
 
 def is_discovery_between_physical_machines(received_cluster):
@@ -143,30 +115,6 @@ def is_discovery_between_physical_machines(received_cluster):
 
 def get_first(ordered_dict):
     return next(iter(ordered_dict.items()))
-
-
-def start_discovery_client():
-    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    while True:
-        cluster = open_file()
-        sending_cluster = cluster.copy()
-        add_our_address_to_first(sending_cluster)
-
-        for node in cluster:
-            is_not_in_physical_machine = not isinstance(cluster[node], str)
-            if is_not_in_physical_machine:
-                if address == "localhost":  # localhost let the main node send message to it
-                    continue
-                else:  # in case if we are main host
-                    node_address, node_port = cluster[node]["address"].split(":")
-                    client.sendto(bytes(json.dumps(sending_cluster), 'utf-8'), (node_address, int(node_port)))
-                    continue
-
-            node_address, node_port = cluster[node].split(":")
-
-            client.sendto(bytes(json.dumps(sending_cluster), 'utf-8'), (node_address, int(node_port)))
-
-        sleep(2)
 
 
 def add_our_address_to_first(sending_cluster):
@@ -209,8 +157,98 @@ def update_file(cluster):
     mutex.release()
 
 
+def start_UDP_server():
+    host_info = (address, port)
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(host_info)
+    # print("[SERVER LISTENS] address:{} | port:{}".format(address, port))
+    while True:
+        msg, addr = server.recvfrom(DISCOVERY_MSG_LENGTH_SIZE)
+        msg_str = msg.decode("utf-8")
+        if msg_str[0:3] == 'get':
+            print("[MESSAGE RECEIVED] {}".format(msg))
+            threading.Thread(target=handle_get_msg, args=[msg_str]).start()
+        else:
+            threading.Thread(target=handle_discovery_msg, args=[msg_str]).start()
+
+
+def handle_get_msg(msg):
+    msg_list = msg.split("get ")
+    if len(msg_list) < 2:
+        return
+    file_name = msg_list[1]
+    files_list = os.listdir(OUR_FILE_DIRECTORY)
+    if files_list.__contains__(file_name):
+        print("I have it!")
+    else:
+        print("I Don't have it!")
+
+
+def handle_discovery_msg(msg):
+    our_cluster = open_file()
+
+    received_cluster = json.loads(msg, object_pairs_hook=OrderedDict)
+    received_cluster.pop(name)  # remove our node from received cluster
+
+    machine_name = is_discovery_between_physical_machines(received_cluster)
+
+    if machine_name is False:
+        for node in received_cluster:
+            our_cluster[node] = received_cluster[node]
+    else:
+        sender_server_info = received_cluster.pop(machine_name)
+        our_cluster[machine_name] = {
+            "address": "{}".format(sender_server_info),
+            "cluster": received_cluster
+        }
+
+    update_file(our_cluster)
+
+
+def start_discovery_client():
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    while True:
+        cluster = open_file()
+        sending_cluster = cluster.copy()
+        add_our_address_to_first(sending_cluster)
+
+        for node in cluster:
+            is_not_in_physical_machine = not isinstance(cluster[node], str)
+            if is_not_in_physical_machine:
+                if address == "localhost":  # localhost let the main node send message to it
+                    continue
+                else:  # in case if we are main host
+                    node_address, node_port = cluster[node]["address"].split(":")
+                    client.sendto(bytes(json.dumps(sending_cluster), 'utf-8'), (node_address, int(node_port)))
+                    continue
+
+            node_address, node_port = cluster[node].split(":")
+
+            client.sendto(bytes(json.dumps(sending_cluster), 'utf-8'), (node_address, int(node_port)))
+
+        sleep(discovery_message_delay)
+
+
+def start_client_interface():
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    while True:
+        client_request = input("> ")
+
+        if client_request.__contains__("get"):
+            print("Valid Request")
+            client_request_list = client_request.split("get")
+
+            if len(client_request_list) > 1:
+                cluster = open_file()
+
+                for node in cluster:
+                    node_address, node_port = cluster[node].split(":")
+                    client.sendto(bytes(client_request, 'utf-8'), (node_address, int(node_port)))
+
+
 if __name__ == "__main__":
     get_host_info_by_user()
 
-    threading.Thread(target=start_discovery_server).start()
-    threading.Thread(target=start_discovery_client()).start()
+    threading.Thread(target=start_UDP_server).start()
+    threading.Thread(target=start_discovery_client).start()
+    threading.Thread(target=start_client_interface).start()
