@@ -58,7 +58,7 @@ def find_Wifi_IPv4():
     return local_IPv4
 
 
-def get_host_info_by_user():
+def get_info_by_user():
     global name, address, port, discovery_message_delay, get_message_delay
     IPv4 = find_Wifi_IPv4()
 
@@ -178,13 +178,28 @@ def start_UDP_server():
         msg, addr = server.recvfrom(DISCOVERY_MSG_LENGTH_SIZE)
         msg_str = msg.decode("utf-8")
         if msg_str[0:3] == 'get':
-            print("[MESSAGE RECEIVED] {}".format(msg))
+            print("[GET RECEIVED] {}".format(msg))
             threading.Thread(target=handle_get_msg, args=[msg_str]).start()
         elif msg_str[0:7] == 'contain':
-            print("[MESSAGE RECEIVED] {}".format(msg))
+            print("[CONTAIN RECEIVED] {}".format(msg))
             threading.Thread(target=handle_contain_msg, args=[msg_str]).start()
+        elif msg_str[0:12] == "GET-REDIRECT":
+            print("[GET-REDIRECT RECEIVED] {}".format(msg))
+            threading.Thread(target=handle_redirect_get_msg, args=[msg_str]).start()
+        elif msg_str[0:16] == "CONTAIN-REDIRECT":
+            print("[CONTAIN-REDIRECT RECEIVED] {}".format(msg))
+            threading.Thread(target=handle_redirect_contain_msg, args=[msg_str]).start()
         else:
             threading.Thread(target=handle_discovery_msg, args=[msg_str]).start()
+
+
+def handle_redirect_contain_msg(msg):
+    node_address, node_port = msg.split(" ")[1].split(":")
+    dest_address, dest_port = msg.split(" ")[2].split(":")
+
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.sendto(bytes("contain {}:{} {}:{}".format(node_address, node_port, address, port), 'utf-8'),
+                  (dest_address, int(dest_port)))
 
 
 def handle_contain_msg(msg):
@@ -192,10 +207,29 @@ def handle_contain_msg(msg):
 
     receive_time = current_milli_time()
 
-    node_address, node_port = msg.split(" ")[1].split(":")
-    node_info = "{}:{}".format(node_address, node_port)
+    msg_list = msg.split(" ")
+    node_info = msg_list[1]
+    if len(msg_list) == 3:
+        node_info += " {}".format(msg_list[2])
 
     contain_list[node_info] = receive_time
+
+
+def handle_redirect_get_msg(msg):
+    msg_list = msg.split(" ")
+    if len(msg_list) != 4:
+        return
+    file_name = msg_list[1]
+    node_address, node_port = msg_list[2].split(":")
+    source_address, source_port = msg_list[3].split(":")
+
+    files_list = os.listdir(OUR_FILE_DIRECTORY)
+    if files_list.__contains__(file_name):
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.sendto(bytes("CONTAIN-REDIRECT {}:{} {}:{}".format(address, port, source_address, source_port), 'utf-8'),
+                      (node_address, int(node_port)))
+    else:
+        print("I Don't have it!")
 
 
 def handle_get_msg(msg):
@@ -203,13 +237,31 @@ def handle_get_msg(msg):
     if len(msg_list) != 3:
         return
     file_name = msg_list[1]
+    node_address, node_port = msg_list[2].split(":")
+
+    connected_between_machines = address != 'localhost' and node_address != "localhost"
+    if connected_between_machines:
+        threading.Thread(target=handle_inner_get_node, args=(node_address, node_port, file_name)).start()
+
     files_list = os.listdir(OUR_FILE_DIRECTORY)
     if files_list.__contains__(file_name):
-        node_address, node_port = msg_list[2].split(":")
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         client.sendto(bytes("contain {}:{}".format(address, port), 'utf-8'), (node_address, int(node_port)))
     else:
         print("I Don't have it!")
+
+
+def handle_inner_get_node(source_address, source_port, file_name):
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    our_cluster = open_file()
+    for node in our_cluster:
+        node_is_inside_machine = isinstance(our_cluster[node], str)
+        if node_is_inside_machine:
+            node_address, node_port = our_cluster[node].split(":")
+            client.sendto(
+                bytes("GET-REDIRECT {} {}:{} {}:{}".format(file_name, address, port, source_address, source_port),
+                      'utf-8'),
+                (node_address, int(node_port)))
 
 
 def handle_discovery_msg(msg):
@@ -273,15 +325,21 @@ def start_client_interface():
 
                 contain_list = {}
                 for node in cluster:
-                    node_address, node_port = cluster[node].split(":")
+                    node_is_inner_node = isinstance(cluster[node], str)
+                    if node_is_inner_node:
+                        node_address, node_port = cluster[node].split(":")
+                    else:
+                        node_address, node_port = cluster[node]["address"].split(":")
+
                     client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
                                   (node_address, int(node_port)))
+
                 sleep(get_message_delay)
                 print(contain_list)
 
 
 if __name__ == "__main__":
-    get_host_info_by_user()
+    get_info_by_user()
 
     threading.Thread(target=start_UDP_server).start()
     threading.Thread(target=start_discovery_client).start()
