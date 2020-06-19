@@ -198,12 +198,15 @@ def add_our_address_to_first(sending_cluster):
     sending_cluster.move_to_end(name, last=False)  # send updated value to first of ordered dict
 
 
-def open_file():
+def open_file(ordered=True):
     try:
         mutex.acquire()
 
         read_file = open(DISCOVERY_FILE_NAME, "r")
-        data = json.load(read_file, object_pairs_hook=OrderedDict)
+        if ordered:
+            data = json.load(read_file, object_pairs_hook=OrderedDict)
+        else:
+            data = json.load(read_file)
         read_file.close()
 
         mutex.release()
@@ -628,7 +631,51 @@ def request_to_get_file(info, file_name):
         server.close()
 
 
+def add_new_node():
+    print("Enter your node name:")
+    input_name = input("> ")
+
+    print("Enter your node type:")
+    print("1) local     2) other")
+    command = input("> ")
+    while command != '1' and command != '2':
+        print("Invalid command, try again")
+        command = input("> ")
+
+    if command == '2':
+        print("Enter your node address:")
+        input_address = input("> ")
+        while len(input_address.split(".")) != 4:
+            print("Wrong input, your input should be in dotted decimal format of IPv4(x.x.x.x)")
+            input_address = input("> ")
+
+    print("Enter port number:")
+    input_port = input("> ")
+    while not input_port.isdigit():
+        print("your port should be a number")
+        input_port = input("> ")
+
+    our_cluster = open_file()
+
+    if command == '1':
+        our_cluster[input_name] = "localhost:{}".format(input_port)
+    else:
+        our_cluster[input_name] = {
+            "address": "{}:{}".format(input_address, input_port),
+            "cluster": {}
+        }
+
+    update_file(our_cluster)
+
+
 def start_client_interface():
+    print("---------------------------------------------------------------------------------")
+    print("Commands guidance:")
+    print("get <file_name> : search your file name through nodes and download if it exists")
+    print("list : list all of existing nodes")
+    print("add : add a new node to your node file ({})".format(DISCOVERY_FILE_NAME))
+    print("---------------------------------------------------------------------------------")
+
     while True:
         client_request = input("> ")
 
@@ -644,6 +691,13 @@ def start_client_interface():
                     file_name = client_request_list[1]
 
                     request_to_get_file(nearest_node_info, file_name)
+        if client_request == "list":
+            our_cluster = open_file(False)
+            for node in our_cluster:
+                print("{} {}".format(node, our_cluster[node]))
+        if client_request == "add":
+            add_new_node()
+            print("Node added successfully")
 
 
 if __name__ == "__main__":
