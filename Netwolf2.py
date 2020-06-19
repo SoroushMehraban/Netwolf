@@ -12,6 +12,8 @@ DISCOVERY_FILE_NAME = "Netwolf2.json"
 OUR_FILE_DIRECTORY = 'N2'
 discovery_message_delay = 0
 get_message_delay = 0
+number_of_concurrent_connections = 0
+concurrent_connections_length = 0
 contain_list = {}
 prior_communications = {}
 
@@ -115,7 +117,7 @@ def find_Wifi_IPv4():
 
 
 def get_info_by_user():
-    global name, address, port, discovery_message_delay, get_message_delay
+    global name, address, port, discovery_message_delay, get_message_delay, concurrent_connections_length
     IPv4 = find_Wifi_IPv4()
 
     print("Enter your name in cluster:")
@@ -166,6 +168,12 @@ def get_info_by_user():
     while get_message_delay <= 0:
         print("Time delay should be greater than 0:")
         get_message_delay = input("> ")
+
+    print("Enter number of connections that you want to handle at the same time:")
+    concurrent_connections_length = int(input("> "))
+    while concurrent_connections_length <= 0:
+        print("Time delay should be greater than 0:")
+        concurrent_connections_length = input("> ")
 
 
 def is_discovery_between_physical_machines(received_cluster):
@@ -300,6 +308,8 @@ def handle_TCP_request(connection):
 
 
 def start_UDP_server():
+    global number_of_concurrent_connections
+
     host_info = (address, port)
     server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server.bind(host_info)
@@ -307,6 +317,13 @@ def start_UDP_server():
     while True:
         msg, addr = server.recvfrom(DISCOVERY_MSG_LENGTH_SIZE)
         msg_str = msg.decode("utf-8")
+
+        if msg_str[0] != '{':  # if it's not discovery message
+            if number_of_concurrent_connections < concurrent_connections_length + 1:
+                number_of_concurrent_connections += 1
+            if number_of_concurrent_connections == concurrent_connections_length + 1:
+                continue
+
         if msg_str[0:3] == 'get':
             print("[GET RECEIVED] {}".format(msg))
             threading.Thread(target=handle_get_msg, args=[msg_str]).start()
@@ -324,6 +341,8 @@ def start_UDP_server():
 
 
 def handle_redirect_contain_msg(msg):
+    global number_of_concurrent_connections
+
     msg_list = msg.split(" ")
     info = msg_list[1]
     dest_address, dest_port = msg_list[2].split(":")
@@ -339,9 +358,11 @@ def handle_redirect_contain_msg(msg):
                   'utf-8'),
             (dest_address, int(dest_port)))
 
+    number_of_concurrent_connections -= 1
+
 
 def handle_contain_msg(msg):
-    global contain_list
+    global contain_list, number_of_concurrent_connections
 
     receive_time = current_milli_time()
 
@@ -352,9 +373,12 @@ def handle_contain_msg(msg):
         node_info += "-{}".format(msg_list[2])
 
     contain_list[node_info] = receive_time
+    number_of_concurrent_connections -= 1
 
 
 def handle_redirect_get_msg(msg):
+    global number_of_concurrent_connections
+
     msg_list = msg.split(" ")
     if len(msg_list) != 4 and len(msg_list) != 5:
         return
@@ -389,6 +413,8 @@ def handle_redirect_get_msg(msg):
                                                                      origin_address, origin_port), 'utf-8'),
                 (node_address, int(node_port)))
 
+    number_of_concurrent_connections -= 1
+
 
 def handle_inner_redirect_get_node(source_address, source_port, origin_address, origin_port, file_name):
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -405,6 +431,7 @@ def handle_inner_redirect_get_node(source_address, source_port, origin_address, 
 
 
 def handle_get_msg(msg):
+    global number_of_concurrent_connections
     msg_list = msg.split(" ")
     if len(msg_list) != 3:
         return
@@ -427,6 +454,8 @@ def handle_get_msg(msg):
         free_ride(node_address, node_port)
         client.sendto(bytes("contain {}_{}:{}".format(file_size, address, TCP_port), 'utf-8'),
                       (node_address, int(node_port)))
+
+    number_of_concurrent_connections -= 1
 
 
 def handle_local_to_main_node(source_address, source_port, file_name):
