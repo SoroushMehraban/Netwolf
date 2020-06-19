@@ -7,7 +7,7 @@ import subprocess
 import os
 
 DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
-TCP_INSTRUCTION_LENGTH = 64
+TCP_INSTRUCTION_LENGTH = 128
 DISCOVERY_FILE_NAME = "Netwolf3.json"
 OUR_FILE_DIRECTORY = 'N3'
 discovery_message_delay = 0
@@ -190,12 +190,12 @@ def handle_TCP_request(connection):
     msg = connection.recv(TCP_INSTRUCTION_LENGTH).decode("utf-8")
     print("[TCP MESSAGE RECEIVED] {}".format(msg))
     msg_list = msg.split(" ")
+    file_name = msg_list[1]
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-    if msg[0:4] == "send":
-        file_name = msg_list[1]
+    if msg_list[0] == "send":
         listening_address, listening_port = msg_list[2].split(":")
 
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.connect((listening_address, int(listening_port)))
 
         f = open("{}\{}".format(OUR_FILE_DIRECTORY, file_name), 'rb')
@@ -203,6 +203,47 @@ def handle_TCP_request(connection):
         f.close()
 
         send_TCP_msg(client, contents, False)
+    elif msg_list[0].split("_")[0] == "redirect-send":
+        file_size = int(msg_list[0].split("_")[1])
+        if len(msg_list) > 3:
+            chain_nodes = msg_list[2].split("-")
+            temp_server, temp_port = start_temp_TCP_server()
+
+            if len(chain_nodes) == 1:
+                next_hop_address, next_hop_port = chain_nodes[0].split(":")
+                client.connect((next_hop_address, int(next_hop_port)))
+                send_TCP_msg(client, "redirect-send_{} {} {}:{}".format(file_size, file_name, address, temp_port), True)
+            else:
+                next_hop_address, next_hop_port = chain_nodes[-1].split(":")
+                next_hop_chain_nodes = msg_list[2].split("-" + chain_nodes[-1])[0]
+
+                client.connect((next_hop_address, int(next_hop_port)))
+                send_TCP_msg(client,
+                             "redirect-send_{} {} {} {}:{}".format(file_size, file_name, next_hop_chain_nodes, address,
+                                                                   temp_port),
+                             True)
+
+            connection, addr = temp_server.accept()
+            msg = connection.recv(file_size)
+            temp_server.close()
+
+            client2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            print("Error: {}".format(msg_list[3]))
+            returning_address, returning_port = msg_list[3].split(":")
+            client2.connect((returning_address, int(returning_port)))
+
+            send_TCP_msg(client2, msg, False)
+            client2.close()
+        else:  # last hop
+            f = open("{}\{}".format(OUR_FILE_DIRECTORY, file_name), 'rb')
+            contents = f.read()
+            f.close()
+
+            returning_address, returning_port = msg_list[2].split(":")
+            client.connect((returning_address, int(returning_port)))
+            send_TCP_msg(client, contents, False)
+
+    client.close()
 
 
 def start_UDP_server():
@@ -254,7 +295,7 @@ def handle_contain_msg(msg):
     msg_list = msg.split(" ")
     node_info = msg_list[1]
 
-    if len(msg_list) == 3 and (not msg_list[1].__contains__("-")):
+    if len(msg_list) == 3:
         node_info += "-{}".format(msg_list[2])
 
     contain_list[node_info] = receive_time
@@ -412,12 +453,14 @@ def inform_user_about_containers():
     number_of_containers = len(contain_list)
     if number_of_containers == 0:
         print("* No one has your file")
+        return False
     elif number_of_containers == 1:
         print("* Only one node has your file")
         print("* Request to get the file...")
     else:
         print("* Found your file in {} nodes".format(len(contain_list)))
         print("* Request to get from the nearest node...")
+    return True
 
 
 def send_get_request(client_request):
@@ -454,16 +497,21 @@ def write_binary_file(file_name, content):
     f.close()
 
 
+def start_temp_TCP_server():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((address, 0))
+    temp_TCP_port = server.getsockname()[1]
+    server.listen()
+    return server, temp_TCP_port
+
+
 def request_to_get_file(info, file_name):
     info_list = info.split("_")
     file_size = int(info_list[0])
 
     connection_is_direct = not info_list[1].__contains__("-")
     if connection_is_direct:
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind((address, 0))
-        temp_TCP_port = server.getsockname()[1]
-        server.listen()
+        server, temp_TCP_port = start_temp_TCP_server()
 
         dest_address, dest_port = info_list[1].split(":")
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -475,7 +523,25 @@ def request_to_get_file(info, file_name):
         print("file received")
         write_binary_file(file_name, msg)
         print("file saved on your node directory")
+        server.close()
+    else:
+        server, temp_TCP_port = start_temp_TCP_server()
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+        chain_nodes = info_list[1].split("-")
+        print(chain_nodes)
+        next_hop_address, next_hop_port = chain_nodes[-1].split(":")
+        next_hope_chain_nodes = info_list[1].split("-" + chain_nodes[-1])[0]
+        client.connect((next_hop_address, int(next_hop_port)))
+        send_TCP_msg(client,
+                     "redirect-send_{} {} {} {}:{}".format(file_size, file_name, next_hope_chain_nodes, address,
+                                                           temp_TCP_port), True)
+
+        connection, addr = server.accept()
+        msg = connection.recv(file_size)
+        print("file received")
+        write_binary_file(file_name, msg)
+        print("file saved on your node directory")
         server.close()
 
 
@@ -489,11 +555,12 @@ def start_client_interface():
                 print("Searching...")
                 send_get_request(client_request)
                 sleep(get_message_delay)
-                inform_user_about_containers()
+                someone_has_our_file = inform_user_about_containers()
+                if someone_has_our_file:
+                    nearest_node_info = find_nearest_node()
+                    file_name = client_request_list[1]
 
-                nearest_node_info = find_nearest_node()
-                file_name = client_request_list[1]
-                request_to_get_file(nearest_node_info, file_name)
+                    request_to_get_file(nearest_node_info, file_name)
 
 
 if __name__ == "__main__":
