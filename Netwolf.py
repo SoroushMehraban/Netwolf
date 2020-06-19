@@ -13,7 +13,8 @@ discovery_message_delay = 0
 get_message_delay = 0
 contain_list = {}
 
-name, address, port = 0, 0, 0  # will be set in function "get_host_info_by_user"
+name, address, port = 0, 0, 0  # will be set in function "get_info_by_user"
+TCP_port = 0  # will be set in function "start_TCP_server"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
 
 
@@ -169,11 +170,25 @@ def update_file(cluster):
     mutex.release()
 
 
+def start_TCP_server():
+    global TCP_port
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((address, 0))
+    TCP_port = server.getsockname()[1]
+
+    print("[TCP SERVER LISTENS] address:{} | port:{}".format(address, TCP_port))
+
+    server.listen()
+    while True:
+        connection, socket_address = server.accept()
+
+
 def start_UDP_server():
     host_info = (address, port)
     server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server.bind(host_info)
-    # print("[SERVER LISTENS] address:{} | port:{}".format(address, port))
+    print("[UDP SERVER LISTENS] address:{} | port:{}".format(address, port))
     while True:
         msg, addr = server.recvfrom(DISCOVERY_MSG_LENGTH_SIZE)
         msg_str = msg.decode("utf-8")
@@ -200,12 +215,12 @@ def handle_redirect_contain_msg(msg):
 
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     if len(msg_list) == 3:
-        client.sendto(bytes("contain {} {}:{}".format(info, address, port), 'utf-8'),
+        client.sendto(bytes("contain {} {}:{}".format(info, address, TCP_port), 'utf-8'),
                       (dest_address, int(dest_port)))
     elif len(msg_list) == 4:
         source_address, source_port = msg_list[3].split(":")
         client.sendto(
-            bytes("CONTAIN-REDIRECT {}-{}:{} {}:{}".format(info, address, port, source_address, source_port), 'utf-8'),
+            bytes("CONTAIN-REDIRECT {}-{}:{} {}:{}".format(info, address, TCP_port, source_address, source_port), 'utf-8'),
             (dest_address, int(dest_port)))
 
 
@@ -239,14 +254,15 @@ def handle_redirect_get_msg(msg):
     files_list = os.listdir(OUR_FILE_DIRECTORY)
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
         if len(msg_list) == 4:
             client.sendto(
-                bytes("CONTAIN-REDIRECT {}:{} {}:{}".format(address, port, source_address, source_port), 'utf-8'),
+                bytes("CONTAIN-REDIRECT {}_{}:{} {}:{}".format(file_size, address, TCP_port, source_address, source_port), 'utf-8'),
                 (node_address, int(node_port)))
         else:
             origin_address, origin_port = msg_list[4].split(":")
             client.sendto(
-                bytes("CONTAIN-REDIRECT {}:{} {}:{} {}:{}".format(address, port, source_address, source_port,
+                bytes("CONTAIN-REDIRECT {}_{}:{} {}:{} {}:{}".format(file_size, address, TCP_port, source_address, source_port,
                                                                   origin_address, origin_port), 'utf-8'),
                 (node_address, int(node_port)))
     else:
@@ -285,7 +301,8 @@ def handle_get_msg(msg):
     files_list = os.listdir(OUR_FILE_DIRECTORY)
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client.sendto(bytes("contain {}:{}".format(address, port), 'utf-8'), (node_address, int(node_port)))
+        file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
+        client.sendto(bytes("contain {}_{}:{}".format(file_size, address, TCP_port), 'utf-8'), (node_address, int(node_port)))
     else:
         print("I Don't have it!")
 
@@ -416,5 +433,7 @@ if __name__ == "__main__":
     get_info_by_user()
 
     threading.Thread(target=start_UDP_server).start()
+    threading.Thread(target=start_TCP_server).start()
     threading.Thread(target=start_discovery_client).start()
+    sleep(0.5)
     threading.Thread(target=start_client_interface).start()
