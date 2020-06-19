@@ -361,34 +361,55 @@ def start_discovery_client():
         sleep(discovery_message_delay)
 
 
-def start_client_interface():
+def find_nearest_node():
+    return min(contain_list.keys(), key=(lambda k: contain_list[k]))
+
+
+def inform_user_about_containers():
+    number_of_containers = len(contain_list)
+    if number_of_containers == 0:
+        print("* No one has your file")
+    elif number_of_containers == 1:
+        print("* Only one node has your file")
+        print("* Request to get the file...")
+    else:
+        print("* Found your file in {} nodes".format(len(contain_list)))
+        print("* Request to get from the nearest node...")
+
+
+def send_get_request(client_request):
     global contain_list
 
+    cluster = open_file()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    contain_list = {}
+    for node in cluster:
+        node_is_inner_node = isinstance(cluster[node], str)
+        if node_is_inner_node:
+            node_address, node_port = cluster[node].split(":")
+            client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
+                          (node_address, int(node_port)))
+        elif address != 'localhost':
+            node_address, node_port = cluster[node]["address"].split(":")
+            client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
+                          (node_address, int(node_port)))
+
+
+def start_client_interface():
     while True:
         client_request = input("> ")
 
         if client_request.__contains__("get"):
-            print("Valid Request")
             client_request_list = client_request.split("get")
-
             if len(client_request_list) > 1:
-                cluster = open_file()
-
-                contain_list = {}
-                for node in cluster:
-                    node_is_inner_node = isinstance(cluster[node], str)
-                    if node_is_inner_node:
-                        node_address, node_port = cluster[node].split(":")
-                        client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
-                                      (node_address, int(node_port)))
-                    elif address != 'localhost':
-                        node_address, node_port = cluster[node]["address"].split(":")
-                        client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
-                                      (node_address, int(node_port)))
-
+                print("Searching...")
+                send_get_request(client_request)
                 sleep(get_message_delay)
-                print(contain_list)
+                inform_user_about_containers()
+
+                nearest_node = find_nearest_node()
+                print("{} -> {}".format(nearest_node, contain_list[nearest_node]))
 
 
 if __name__ == "__main__":
