@@ -7,6 +7,7 @@ import subprocess
 import os
 
 DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
+TCP_INSTRUCTION_LENGTH = 64
 DISCOVERY_FILE_NAME = "Netwolf1.json"
 OUR_FILE_DIRECTORY = 'N1'
 discovery_message_delay = 0
@@ -182,6 +183,26 @@ def start_TCP_server():
     server.listen()
     while True:
         connection, socket_address = server.accept()
+        threading.Thread(target=handle_TCP_request, args=[connection]).start()
+
+
+def handle_TCP_request(connection):
+    msg = connection.recv(TCP_INSTRUCTION_LENGTH).decode("utf-8")
+    print("[TCP MESSAGE RECEIVED] {}".format(msg))
+    msg_list = msg.split(" ")
+
+    if msg[0:4] == "send":
+        file_name = msg_list[1]
+        listening_address, listening_port = msg_list[2].split(":")
+
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((listening_address, int(listening_port)))
+
+        f = open("{}\{}".format(OUR_FILE_DIRECTORY, file_name), 'rb')
+        contents = f.read()
+        f.close()
+
+        send_TCP_msg(client, contents, False)
 
 
 def start_UDP_server():
@@ -220,7 +241,8 @@ def handle_redirect_contain_msg(msg):
     elif len(msg_list) == 4:
         source_address, source_port = msg_list[3].split(":")
         client.sendto(
-            bytes("CONTAIN-REDIRECT {}-{}:{} {}:{}".format(info, address, TCP_port, source_address, source_port), 'utf-8'),
+            bytes("CONTAIN-REDIRECT {}-{}:{} {}:{}".format(info, address, TCP_port, source_address, source_port),
+                  'utf-8'),
             (dest_address, int(dest_port)))
 
 
@@ -257,13 +279,16 @@ def handle_redirect_get_msg(msg):
         file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
         if len(msg_list) == 4:
             client.sendto(
-                bytes("CONTAIN-REDIRECT {}_{}:{} {}:{}".format(file_size, address, TCP_port, source_address, source_port), 'utf-8'),
+                bytes(
+                    "CONTAIN-REDIRECT {}_{}:{} {}:{}".format(file_size, address, TCP_port, source_address, source_port),
+                    'utf-8'),
                 (node_address, int(node_port)))
         else:
             origin_address, origin_port = msg_list[4].split(":")
             client.sendto(
-                bytes("CONTAIN-REDIRECT {}_{}:{} {}:{} {}:{}".format(file_size, address, TCP_port, source_address, source_port,
-                                                                  origin_address, origin_port), 'utf-8'),
+                bytes("CONTAIN-REDIRECT {}_{}:{} {}:{} {}:{}".format(file_size, address, TCP_port, source_address,
+                                                                     source_port,
+                                                                     origin_address, origin_port), 'utf-8'),
                 (node_address, int(node_port)))
     else:
         print("I Don't have it!")
@@ -302,7 +327,8 @@ def handle_get_msg(msg):
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
-        client.sendto(bytes("contain {}_{}:{}".format(file_size, address, TCP_port), 'utf-8'), (node_address, int(node_port)))
+        client.sendto(bytes("contain {}_{}:{}".format(file_size, address, TCP_port), 'utf-8'),
+                      (node_address, int(node_port)))
     else:
         print("I Don't have it!")
 
@@ -413,20 +439,61 @@ def send_get_request(client_request):
                           (node_address, int(node_port)))
 
 
+def send_TCP_msg(source_socket, msg, is_str):
+    if is_str:
+        message = msg.encode("utf-8")
+        source_socket.send(message)
+    else:
+        source_socket.send(msg)
+
+
+def write_binary_file(file_name, content):
+    file_destination = "{}\{}".format(OUR_FILE_DIRECTORY, file_name)
+    f = open(file_destination, 'w+b')
+    f.write(content)
+    f.close()
+
+
+def request_to_get_file(info, file_name):
+    info_list = info.split("_")
+    file_size = int(info_list[0])
+
+    connection_is_direct = not info_list[1].__contains__("-")
+    if connection_is_direct:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((address, 0))
+        temp_TCP_port = server.getsockname()[1]
+        server.listen()
+
+        dest_address, dest_port = info_list[1].split(":")
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((dest_address, int(dest_port)))
+        send_TCP_msg(client, "send {} {}:{}".format(file_name, address, temp_TCP_port), True)
+
+        connection, addr = server.accept()
+        msg = connection.recv(file_size)
+        print("file received")
+        write_binary_file(file_name, msg)
+        print("file saved on your node directory")
+
+        server.close()
+
+
 def start_client_interface():
     while True:
         client_request = input("> ")
 
         if client_request.__contains__("get"):
-            client_request_list = client_request.split("get")
+            client_request_list = client_request.split("get ")
             if len(client_request_list) > 1:
                 print("Searching...")
                 send_get_request(client_request)
                 sleep(get_message_delay)
                 inform_user_about_containers()
 
-                nearest_node = find_nearest_node()
-                print("{} -> {}".format(nearest_node, contain_list[nearest_node]))
+                nearest_node_info = find_nearest_node()
+                file_name = client_request_list[1]
+                request_to_get_file(nearest_node_info, file_name)
 
 
 if __name__ == "__main__":
