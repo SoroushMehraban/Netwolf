@@ -194,36 +194,77 @@ def start_UDP_server():
 
 
 def handle_redirect_contain_msg(msg):
-    node_address, node_port = msg.split(" ")[1].split(":")
-    dest_address, dest_port = msg.split(" ")[2].split(":")
+    msg_list = msg.split(" ")
+    info = msg_list[1]
+    dest_address, dest_port = msg_list[2].split(":")
 
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client.sendto(bytes("contain {}:{} {}:{}".format(node_address, node_port, address, port), 'utf-8'), (dest_address, int(dest_port)))
+    if len(msg_list) == 3:
+        client.sendto(bytes("contain {} {}:{}".format(info, address, port), 'utf-8'),
+                      (dest_address, int(dest_port)))
+    elif len(msg_list) == 4:
+        source_address, source_port = msg_list[3].split(":")
+        client.sendto(
+            bytes("CONTAIN-REDIRECT {}-{}:{} {}:{}".format(info, address, port, source_address, source_port), 'utf-8'),
+            (dest_address, int(dest_port)))
 
 
 def handle_contain_msg(msg):
     global contain_list
 
     receive_time = current_milli_time()
-    node_info = msg.split(" ")[1]
+
+    msg_list = msg.split(" ")
+    node_info = msg_list[1]
+
+    if len(msg_list) == 3 and (not msg_list[1].__contains__("-")):
+        node_info += "-{}".format(msg_list[2])
+
     contain_list[node_info] = receive_time
 
 
 def handle_redirect_get_msg(msg):
     msg_list = msg.split(" ")
-    if len(msg_list) != 4:
+    if len(msg_list) != 4 and len(msg_list) != 5:
         return
     file_name = msg_list[1]
     node_address, node_port = msg_list[2].split(":")
     source_address, source_port = msg_list[3].split(":")
 
+    connected_between_machines = address != 'localhost' and node_address != "localhost"
+    if connected_between_machines:
+        threading.Thread(target=handle_inner_redirect_get_node,
+                         args=(node_address, node_port, source_address, source_port, file_name)).start()
+
     files_list = os.listdir(OUR_FILE_DIRECTORY)
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client.sendto(bytes("CONTAIN-REDIRECT {}:{} {}:{}".format(address, port, source_address, source_port), 'utf-8'),
-                      (node_address, int(node_port)))
+        if len(msg_list) == 4:
+            client.sendto(
+                bytes("CONTAIN-REDIRECT {}:{} {}:{}".format(address, port, source_address, source_port), 'utf-8'),
+                (node_address, int(node_port)))
+        else:
+            origin_address, origin_port = msg_list[4].split(":")
+            client.sendto(
+                bytes("CONTAIN-REDIRECT {}:{} {}:{} {}:{}".format(address, port, source_address, source_port,
+                                                                  origin_address, origin_port), 'utf-8'),
+                (node_address, int(node_port)))
     else:
         print("I Don't have it!")
+
+
+def handle_inner_redirect_get_node(source_address, source_port, origin_address, origin_port, file_name):
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    our_cluster = open_file()
+    for node in our_cluster:
+        node_is_inside_machine = isinstance(our_cluster[node], str)
+        if node_is_inside_machine:
+            dest_address, dest_port = our_cluster[node].split(":")
+            client.sendto(
+                bytes("GET-REDIRECT {} {}:{} {}:{} {}:{}".format(file_name, address, port, source_address, source_port,
+                                                                 origin_address, origin_port),
+                      'utf-8'),
+                (dest_address, int(dest_port)))
 
 
 def handle_get_msg(msg):
@@ -237,12 +278,29 @@ def handle_get_msg(msg):
     if connected_between_machines:
         threading.Thread(target=handle_inner_get_node, args=(node_address, node_port, file_name)).start()
 
+    local_to_main_node = address != "localhost" and node_address == "localhost"
+    if local_to_main_node:
+        threading.Thread(target=handle_local_to_main_node, args=(node_address, node_port, file_name)).start()
+
     files_list = os.listdir(OUR_FILE_DIRECTORY)
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         client.sendto(bytes("contain {}:{}".format(address, port), 'utf-8'), (node_address, int(node_port)))
     else:
         print("I Don't have it!")
+
+
+def handle_local_to_main_node(source_address, source_port, file_name):
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    our_cluster = open_file()
+    for node in our_cluster:
+        node_is_outside_machine = not isinstance(our_cluster[node], str)
+        if node_is_outside_machine:
+            node_address, node_port = our_cluster[node]["address"].split(":")
+            client.sendto(
+                bytes("GET-REDIRECT {} {}:{} {}:{}".format(file_name, address, port, source_address, source_port),
+                      'utf-8'),
+                (node_address, int(node_port)))
 
 
 def handle_inner_get_node(source_address, source_port, file_name):
@@ -322,11 +380,12 @@ def start_client_interface():
                     node_is_inner_node = isinstance(cluster[node], str)
                     if node_is_inner_node:
                         node_address, node_port = cluster[node].split(":")
-                    else:
+                        client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
+                                      (node_address, int(node_port)))
+                    elif address != 'localhost':
                         node_address, node_port = cluster[node]["address"].split(":")
-
-                    client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
-                                  (node_address, int(node_port)))
+                        client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
+                                      (node_address, int(node_port)))
 
                 sleep(get_message_delay)
                 print(contain_list)
