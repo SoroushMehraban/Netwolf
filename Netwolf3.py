@@ -31,11 +31,10 @@ def update_free_ride(node_info):
     if node_is_inside_machine:
         prior_communications[node_entry] = current_milli_time()
     else:
-        print(node_entry)
         main_entry = find_main_info_of_local_node(node_entry)
         if main_entry is None:
             print("Error in updating free ride prior communication list!")
-            exit()
+
         if prior_communications.__contains__(main_entry):
             prior_communications[main_entry]["nodes"][node_entry] = current_milli_time()
         else:
@@ -70,8 +69,8 @@ def current_milli_time():
 def free_ride(node_address, node_port, main_address=0, main_port=0):
     node_info = "{}:{}".format(node_address, node_port)
     main_info = "{}:{}".format(main_address, main_port)
-    print("Prior communications:")
-    print(prior_communications)
+    # print("Prior communications:")
+    # print(prior_communications)
 
     if main_address == 0:
         if prior_communications.__contains__(node_info):
@@ -79,7 +78,7 @@ def free_ride(node_address, node_port, main_address=0, main_port=0):
                 last_time = prior_communications[node_info]
                 current_time = current_milli_time()
                 delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
-                print("Delay : {}".format(delay))
+                # print("Delay : {}".format(delay))
                 sleep(delay)
             else:
                 last_time = prior_communications[node_info]["delay"]
@@ -88,7 +87,7 @@ def free_ride(node_address, node_port, main_address=0, main_port=0):
                     prior_communications[node_info]["delay"] = current_milli_time()
                     return
                 delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
-                print("Delay : {}".format(delay))
+                # print("Delay : {}".format(delay))
                 sleep(delay)
         else:
             prior_communications[node_info] = current_milli_time()
@@ -100,7 +99,7 @@ def free_ride(node_address, node_port, main_address=0, main_port=0):
                 prior_communications[main_info]["nodes"][node_info] = current_time
 
                 delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
-                print("Delay : {}".format(delay))
+                # print("Delay : {}".format(delay))
                 sleep(delay)
             else:
                 prior_communications[main_info]["nodes"][node_info] = current_milli_time()
@@ -156,53 +155,58 @@ def get_info_by_user():
     if IPv4 is None:
         print("1) local host  2) choose manually")
 
-        while True:
-            host_mode = int(input("> "))
-            if host_mode == 1:
-                address = 'localhost'
-                break
-            elif host_mode == 2:
-                print("Enter your host address:")
-                address = input(">")
-                break
+        host_mode = input("> ")
+        while host_mode != '1' and host_mode != '2':
+            print("Invalid input, try again")
+            host_mode = input("> ")
+
+        if host_mode == '1':
+            address = 'localhost'
+        elif host_mode == '2':
+            print("Enter your host address:")
+            address = input(">")
     else:
         print("1) local host  2) your WiFi IPv4({}) 3) choose manually".format(IPv4))
-        while True:
-            host_mode = int(input("> "))
-            if host_mode == 1:
-                address = 'localhost'
-                break
-            elif host_mode == 2:
-                address = IPv4
-                break
-            elif host_mode == 3:
-                print("Enter your host address:")
-                address = input(">")
-                break
+        host_mode = input("> ")
+        while host_mode != '1' and host_mode != '2' and host_mode != '3':
+            print("Invalid input, try again")
+            host_mode = input("> ")
+
+        if host_mode == '1':
+            address = 'localhost'
+        elif host_mode == '2':
+            address = IPv4
+        elif host_mode == '3':
+            print("Enter your host address:")
+            address = input(">")
 
     print("Enter port that it listens by (it should be greater than 1023): ")
-    port = int(input("> "))
-    while port <= 1023:
-        print("Wrong input, please enter port greater than 1023: ")
-        port = int(input("> "))
+    port = input("> ")
+    while (not port.isdigit()) or int(port) <= 1023:
+        print("your port should be a number above 1023")
+        port = input("> ")
+    port = int(port)
 
     print("Enter time delay (in sec) for sending discovery message:")
-    discovery_message_delay = int(input("> "))
-    while discovery_message_delay <= 0:
-        print("Time delay should be greater than 0:")
+    discovery_message_delay = input("> ")
+    while (not discovery_message_delay.isdigit()) or int(discovery_message_delay) <= 0:
+        print("Time delay should be number greater than 0:")
         discovery_message_delay = input("> ")
+    discovery_message_delay = int(discovery_message_delay)
 
     print("Enter time delay (in sec) for waiting response of get message:")
-    get_message_delay = int(input("> "))
-    while get_message_delay <= 0:
+    get_message_delay = input("> ")
+    while (not get_message_delay.isdigit()) or int(get_message_delay) <= 0:
         print("Time delay should be greater than 0:")
         get_message_delay = input("> ")
+    get_message_delay = int(get_message_delay)
 
     print("Enter number of connections that you want to handle at the same time:")
-    concurrent_connections_length = int(input("> "))
-    while concurrent_connections_length <= 0:
-        print("Time delay should be greater than 0:")
+    concurrent_connections_length = input("> ")
+    while (not concurrent_connections_length.isdigit()) or int(concurrent_connections_length) <= 0:
+        print("Number of simultaneous connections should be a number greater than 0:")
         concurrent_connections_length = input("> ")
+    concurrent_connections_length = int(concurrent_connections_length)
 
 
 def is_discovery_between_physical_machines(received_cluster):
@@ -282,7 +286,7 @@ def start_TCP_server():
 
 def handle_TCP_request(connection):
     msg = connection.recv(TCP_INSTRUCTION_LENGTH).decode("utf-8")
-    print("[TCP MESSAGE RECEIVED] {}".format(msg))
+    # print("[TCP MESSAGE RECEIVED] {}".format(msg))
     msg_list = msg.split(" ")
     file_name = msg_list[1]
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -357,16 +361,16 @@ def start_UDP_server():
                 continue
 
         if msg_str[0:3] == 'get':
-            print("[GET RECEIVED] {}".format(msg))
+            # print("[GET RECEIVED] {}".format(msg))
             threading.Thread(target=handle_get_msg, args=[msg_str]).start()
         elif msg_str[0:7] == 'contain':
-            print("[CONTAIN RECEIVED] {}".format(msg))
+            # print("[CONTAIN RECEIVED] {}".format(msg))
             threading.Thread(target=handle_contain_msg, args=[msg_str]).start()
         elif msg_str[0:12] == "GET-REDIRECT":
-            print("[GET-REDIRECT RECEIVED] {}".format(msg))
+            # print("[GET-REDIRECT RECEIVED] {}".format(msg))
             threading.Thread(target=handle_redirect_get_msg, args=[msg_str]).start()
         elif msg_str[0:16] == "CONTAIN-REDIRECT":
-            print("[CONTAIN-REDIRECT RECEIVED] {}".format(msg))
+            # print("[CONTAIN-REDIRECT RECEIVED] {}".format(msg))
             threading.Thread(target=handle_redirect_contain_msg, args=[msg_str]).start()
         else:
             threading.Thread(target=handle_discovery_msg, args=[msg_str]).start()
@@ -627,7 +631,7 @@ def start_temp_TCP_server():
 
 def request_to_get_file(info, file_name):
     info_list = info.split("_")
-    print("info list: {}".format(info_list))
+    #print("info list: {}".format(info_list))
     file_size = int(info_list[0])
 
     connection_is_direct = not info_list[1].__contains__("-")
@@ -695,8 +699,8 @@ def add_new_node():
 
     print("Enter port number:")
     input_port = input("> ")
-    while not input_port.isdigit():
-        print("your port should be a number")
+    while (not input_port.isdigit()) or int(input_port) <= 1023:
+        print("your port should be a number above 1023")
         input_port = input("> ")
 
     our_cluster = open_file()
