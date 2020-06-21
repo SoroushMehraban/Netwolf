@@ -22,7 +22,7 @@ TCP_port = 0  # will be set in function "start_TCP_server"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
 
 
-def update_free_ride_file(node_info):
+def update_free_ride(node_info):
     node_address = node_info.split("_")[1].split(":")[0]
     node_UDP_port = node_info.split("_")[1].split("-")[0].split(":")[-1]
     node_entry = "{}:{}".format(node_address, node_UDP_port)
@@ -318,7 +318,7 @@ def handle_TCP_request(connection):
                              True)
 
             connection, addr = temp_server.accept()
-            msg = connection.recv(file_size)
+            msg = receive_file(connection, file_size)
             temp_server.close()
 
             client2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -640,7 +640,7 @@ def request_to_get_file(info, file_name):
         send_TCP_msg(client, "send {} {}:{}".format(file_name, address, temp_TCP_port), True)
 
         connection, addr = server.accept()
-        msg = connection.recv(file_size)
+        msg = receive_file(connection, file_size)
         print("file received")
         write_binary_file(file_name, msg)
         print("file saved on your node directory")
@@ -658,11 +658,21 @@ def request_to_get_file(info, file_name):
                                                            temp_TCP_port), True)
 
         connection, addr = server.accept()
-        msg = connection.recv(file_size)
+        msg = receive_file(connection, file_size)
         print("file received")
         write_binary_file(file_name, msg)
         print("file saved on your node directory")
         server.close()
+
+
+def receive_file(connection, file_size):
+    data = bytearray()
+    while len(data) < file_size:
+        packet = connection.recv(file_size - len(data))
+        if not packet:
+            return None
+        data.extend(packet)
+    return data
 
 
 def add_new_node():
@@ -723,7 +733,7 @@ def start_client_interface():
                 if someone_has_our_file:
                     nearest_node_info = find_nearest_node()
                     file_name = client_request_list[1]
-                    update_free_ride_file(nearest_node_info)
+                    update_free_ride(nearest_node_info)
                     request_to_get_file(nearest_node_info, file_name)
         if client_request == "list":
             our_cluster = open_file(False)
