@@ -1,4 +1,5 @@
 import socket
+import sys
 import threading
 import json
 from collections import OrderedDict
@@ -8,8 +9,8 @@ import os
 
 DISCOVERY_MSG_LENGTH_SIZE = 1024 * 1024 * 2  # 2MB is maximum length
 TCP_INSTRUCTION_LENGTH = 128
-DISCOVERY_FILE_NAME = "Netwolf1.json"
-OUR_FILE_DIRECTORY = 'N1'
+DISCOVERY_FILE_NAME = "Default_Node.json"
+OUR_FOLDER = 'Default_Folder'
 discovery_message_delay = 0
 get_message_delay = 0
 number_of_concurrent_connections = 0
@@ -296,7 +297,7 @@ def handle_TCP_request(connection):
 
         client.connect((listening_address, int(listening_port)))
 
-        f = open("{}\{}".format(OUR_FILE_DIRECTORY, file_name), 'rb')
+        f = open("{}\{}".format(OUR_FOLDER, file_name), 'rb')
         contents = f.read()
         f.close()
 
@@ -332,7 +333,7 @@ def handle_TCP_request(connection):
             send_TCP_msg(client2, msg, False)
             client2.close()
         else:  # last hop
-            f = open("{}\{}".format(OUR_FILE_DIRECTORY, file_name), 'rb')
+            f = open("{}\{}".format(OUR_FOLDER, file_name), 'rb')
             contents = f.read()
             f.close()
 
@@ -428,10 +429,10 @@ def handle_redirect_get_msg(msg):
         threading.Thread(target=handle_inner_redirect_get_node,
                          args=(node_address, node_port, source_address, source_port, file_name)).start()
 
-    files_list = os.listdir(OUR_FILE_DIRECTORY)
+    files_list = os.listdir(OUR_FOLDER)
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
+        file_size = os.path.getsize("{}\{}".format(OUR_FOLDER, file_name))
         if len(msg_list) == 4:
             if (not msg_list[2].__contains__("localhost")) and (not msg_list.__contains__("localhost")):
                 free_ride(source_address, source_port)
@@ -485,10 +486,10 @@ def handle_get_msg(msg):
     if local_to_main_node:
         threading.Thread(target=handle_local_to_main_node, args=(node_address, node_port, file_name)).start()
 
-    files_list = os.listdir(OUR_FILE_DIRECTORY)
+    files_list = os.listdir(OUR_FOLDER)
     if files_list.__contains__(file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
+        file_size = os.path.getsize("{}\{}".format(OUR_FOLDER, file_name))
 
         free_ride(node_address, node_port)
         client.sendto(bytes("contain {}_{}:{}:{}".format(file_size, address, TCP_port, port), 'utf-8'),
@@ -615,7 +616,7 @@ def send_TCP_msg(source_socket, msg, is_str):
 
 
 def write_binary_file(file_name, content):
-    file_destination = "{}\{}".format(OUR_FILE_DIRECTORY, file_name)
+    file_destination = "{}\{}".format(OUR_FOLDER, file_name)
     f = open(file_destination, 'w+b')
     f.write(content)
     f.close()
@@ -631,7 +632,7 @@ def start_temp_TCP_server():
 
 def request_to_get_file(info, file_name):
     info_list = info.split("_")
-    #print("info list: {}".format(info_list))
+    # print("info list: {}".format(info_list))
     file_size = int(info_list[0])
 
     connection_is_direct = not info_list[1].__contains__("-")
@@ -748,7 +749,37 @@ def start_client_interface():
             print("Node added successfully")
 
 
+def handle_file_and_folder():
+    global DISCOVERY_FILE_NAME, OUR_FOLDER
+    try:
+        argv_num = 1
+        for argv in sys.argv[1:]:
+            if argv == '-d':
+                if sys.argv[argv_num + 1][0] != "-":
+                    OUR_FOLDER = sys.argv[argv_num + 1]
+            if argv == '-f':
+                if sys.argv[argv_num + 1][0] != "-":
+                    DISCOVERY_FILE_NAME = sys.argv[argv_num + 1]
+            argv_num += 1
+    except IndexError:
+        print("Input arguments are not valid")
+        exit()
+    if not os.path.isdir(OUR_FOLDER):
+        if len(OUR_FOLDER.split(".")) == 1:
+            os.system("mkdir {}".format(OUR_FOLDER))
+        else:
+            print("Your folder should not contain '.' in it's name")
+            exit()
+    if not os.path.isfile(DISCOVERY_FILE_NAME):
+        if len(DISCOVERY_FILE_NAME.split(".")) == 1 or DISCOVERY_FILE_NAME.split(".")[-1] != 'json':
+            print("Your discovery file name should end with .json")
+            exit()
+        else:
+            os.system("touch {}".format(DISCOVERY_FILE_NAME))
+
+
 if __name__ == "__main__":
+    handle_file_and_folder()
     get_info_by_user()
 
     threading.Thread(target=start_UDP_server).start()
