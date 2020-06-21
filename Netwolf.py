@@ -22,11 +22,45 @@ TCP_port = 0  # will be set in function "start_TCP_server"
 mutex = threading.Lock()  # for avoiding R/W on discovery file at the same time
 
 
-def reset_prior_communication_after_a_while():
-    global prior_communications
-    while True:
-        sleep(3000)
-        prior_communications = {}
+def update_free_ride_file(node_info):
+    node_address = node_info.split("_")[1].split(":")[0]
+    node_UDP_port = node_info.split("_")[1].split("-")[0].split(":")[-1]
+    node_entry = "{}:{}".format(node_address, node_UDP_port)
+
+    node_is_inside_machine = is_inside_machine(node_entry)
+    if node_is_inside_machine:
+        prior_communications[node_entry] = current_milli_time()
+    else:
+        print(node_entry)
+        main_entry = find_main_info_of_local_node(node_entry)
+        if main_entry is None:
+            print("Error in updating free ride prior communication list!")
+            exit()
+        if prior_communications.__contains__(main_entry):
+            prior_communications[main_entry]["nodes"][node_entry] = current_milli_time()
+        else:
+            prior_communications[main_entry] = {"delay": None, "nodes": {node_entry: current_milli_time()}}
+
+
+def find_main_info_of_local_node(node_entry):
+    our_cluster = open_file(False)
+    for node in our_cluster:
+        if not isinstance(our_cluster[node], str):
+            for local_node in our_cluster[node]["cluster"]:
+                if our_cluster[node]["cluster"][local_node] == node_entry:
+                    return node
+    return None
+
+
+def is_inside_machine(node_entry):
+    our_cluster = open_file(False)
+    for node in our_cluster:
+        if isinstance(our_cluster[node], str):
+            if our_cluster[node] == node_entry:
+                return True
+        elif our_cluster[node]["address"] == node_entry:
+            return True
+    return False
 
 
 def current_milli_time():
@@ -44,15 +78,14 @@ def free_ride(node_address, node_port, main_address=0, main_port=0):
             if isinstance(prior_communications[node_info], int):
                 last_time = prior_communications[node_info]
                 current_time = current_milli_time()
-                prior_communications[node_info] = current_time
                 delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
                 print("Delay : {}".format(delay))
                 sleep(delay)
             else:
                 last_time = prior_communications[node_info]["delay"]
                 current_time = current_milli_time()
-                prior_communications[node_info]["delay"] = current_time
                 if last_time is None:
+                    prior_communications[node_info]["delay"] = current_milli_time()
                     return
                 delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
                 print("Delay : {}".format(delay))
@@ -61,20 +94,16 @@ def free_ride(node_address, node_port, main_address=0, main_port=0):
             prior_communications[node_info] = current_milli_time()
     else:  # node is in another physical machine
         if prior_communications.__contains__(main_info):
-            if isinstance(prior_communications[main_info], int):
-                main_delay = prior_communications[main_info]
-                prior_communications[main_info] = {"delay": main_delay, "nodes": {node_info: current_milli_time()}}
-            else:
-                if prior_communications[main_info]["nodes"].__contains__(node_info):
-                    last_time = prior_communications[main_info]["nodes"][node_info]
-                    current_time = current_milli_time()
-                    prior_communications[main_info]["nodes"][node_info] = current_time
+            if prior_communications[main_info]["nodes"].__contains__(node_info):
+                last_time = prior_communications[main_info]["nodes"][node_info]
+                current_time = current_milli_time()
+                prior_communications[main_info]["nodes"][node_info] = current_time
 
-                    delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
-                    print("Delay : {}".format(delay))
-                    sleep(delay)
-                else:
-                    prior_communications[main_info]["nodes"][node_info] = current_milli_time()
+                delay = (current_time - last_time) / 100000  # delay 0.01 sec for 1 sec difference
+                print("Delay : {}".format(delay))
+                sleep(delay)
+            else:
+                prior_communications[main_info]["nodes"][node_info] = current_milli_time()
         else:
             prior_communications[main_info] = {"delay": None, "nodes": {node_info: current_milli_time()}}
 
@@ -275,11 +304,11 @@ def handle_TCP_request(connection):
             temp_server, temp_port = start_temp_TCP_server()
 
             if len(chain_nodes) == 1:
-                next_hop_address, next_hop_port = chain_nodes[0].split(":")
+                next_hop_address, next_hop_port = chain_nodes[0].split(":")[0: 2]
                 client.connect((next_hop_address, int(next_hop_port)))
                 send_TCP_msg(client, "redirect-send_{} {} {}:{}".format(file_size, file_name, address, temp_port), True)
             else:
-                next_hop_address, next_hop_port = chain_nodes[-1].split(":")
+                next_hop_address, next_hop_port = chain_nodes[-1].split(":")[0: 2]
                 next_hop_chain_nodes = msg_list[2].split("-" + chain_nodes[-1])[0]
 
                 client.connect((next_hop_address, int(next_hop_port)))
@@ -352,13 +381,14 @@ def handle_redirect_contain_msg(msg):
 
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     if len(msg_list) == 3:
-        client.sendto(bytes("contain {} {}:{}".format(info, address, TCP_port), 'utf-8'),
+        client.sendto(bytes("contain {} {}:{}:{}".format(info, address, TCP_port, port), 'utf-8'),
                       (dest_address, int(dest_port)))
     elif len(msg_list) == 4:
         source_address, source_port = msg_list[3].split(":")
         client.sendto(
-            bytes("CONTAIN-REDIRECT {}-{}:{} {}:{}".format(info, address, TCP_port, source_address, source_port),
-                  'utf-8'),
+            bytes(
+                "CONTAIN-REDIRECT {}-{}:{}:{} {}:{}".format(info, address, TCP_port, port, source_address, source_port),
+                'utf-8'),
             (dest_address, int(dest_port)))
 
     number_of_concurrent_connections -= 1
@@ -403,7 +433,8 @@ def handle_redirect_get_msg(msg):
                 free_ride(source_address, source_port)
             client.sendto(
                 bytes(
-                    "CONTAIN-REDIRECT {}_{}:{} {}:{}".format(file_size, address, TCP_port, source_address, source_port),
+                    "CONTAIN-REDIRECT {}_{}:{}:{} {}:{}".format(file_size, address, TCP_port, port, source_address,
+                                                                source_port),
                     'utf-8'),
                 (node_address, int(node_port)))
         else:
@@ -411,9 +442,10 @@ def handle_redirect_get_msg(msg):
 
             free_ride(origin_address, origin_port, source_address, source_port)
             client.sendto(
-                bytes("CONTAIN-REDIRECT {}_{}:{} {}:{} {}:{}".format(file_size, address, TCP_port, source_address,
-                                                                     source_port,
-                                                                     origin_address, origin_port), 'utf-8'),
+                bytes("CONTAIN-REDIRECT {}_{}:{}:{} {}:{} {}:{}".format(file_size, address, TCP_port, port,
+                                                                        source_address,
+                                                                        source_port,
+                                                                        origin_address, origin_port), 'utf-8'),
                 (node_address, int(node_port)))
 
     number_of_concurrent_connections -= 1
@@ -455,7 +487,7 @@ def handle_get_msg(msg):
         file_size = os.path.getsize("{}\{}".format(OUR_FILE_DIRECTORY, file_name))
 
         free_ride(node_address, node_port)
-        client.sendto(bytes("contain {}_{}:{}".format(file_size, address, TCP_port), 'utf-8'),
+        client.sendto(bytes("contain {}_{}:{}:{}".format(file_size, address, TCP_port, port), 'utf-8'),
                       (node_address, int(node_port)))
 
     number_of_concurrent_connections -= 1
@@ -565,8 +597,9 @@ def send_get_request(client_request):
                           (node_address, int(node_port)))
         elif address != 'localhost':
             node_address, node_port = cluster[node]["address"].split(":")
-            client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
-                          (node_address, int(node_port)))
+            if node_address != address:
+                client.sendto(bytes("{} {}:{}".format(client_request, address, port), 'utf-8'),
+                              (node_address, int(node_port)))
 
 
 def send_TCP_msg(source_socket, msg, is_str):
@@ -594,13 +627,14 @@ def start_temp_TCP_server():
 
 def request_to_get_file(info, file_name):
     info_list = info.split("_")
+    print("info list: {}".format(info_list))
     file_size = int(info_list[0])
 
     connection_is_direct = not info_list[1].__contains__("-")
     if connection_is_direct:
         server, temp_TCP_port = start_temp_TCP_server()
 
-        dest_address, dest_port = info_list[1].split(":")
+        dest_address, dest_port = info_list[1].split(":")[0: 2]
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.connect((dest_address, int(dest_port)))
         send_TCP_msg(client, "send {} {}:{}".format(file_name, address, temp_TCP_port), True)
@@ -616,7 +650,7 @@ def request_to_get_file(info, file_name):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         chain_nodes = info_list[1].split("-")
-        next_hop_address, next_hop_port = chain_nodes[-1].split(":")
+        next_hop_address, next_hop_port = chain_nodes[-1].split(":")[0: 2]
         next_hope_chain_nodes = info_list[1].split("-" + chain_nodes[-1])[0]
         client.connect((next_hop_address, int(next_hop_port)))
         send_TCP_msg(client,
@@ -689,7 +723,7 @@ def start_client_interface():
                 if someone_has_our_file:
                     nearest_node_info = find_nearest_node()
                     file_name = client_request_list[1]
-
+                    update_free_ride_file(nearest_node_info)
                     request_to_get_file(nearest_node_info, file_name)
         if client_request == "list":
             our_cluster = open_file(False)
@@ -708,4 +742,3 @@ if __name__ == "__main__":
     threading.Thread(target=start_discovery_client).start()
     sleep(0.5)
     threading.Thread(target=start_client_interface).start()
-    threading.Thread(target=reset_prior_communication_after_a_while).start()

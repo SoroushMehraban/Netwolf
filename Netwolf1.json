@@ -1,1 +1,3 @@
-{"N2": "localhost:5328", "N3": "localhost:5329", "N4": {"address": "192.168.2.11:5330", "cluster": {"N5": "localhost:5331"}}}
+{
+    "N2": "localhost:5328"
+}
