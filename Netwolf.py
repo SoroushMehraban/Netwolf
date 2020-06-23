@@ -776,6 +776,9 @@ def handle_file_and_folder():
             exit()
         else:
             os.system("touch {}".format(DISCOVERY_FILE_NAME))
+            f = open(DISCOVERY_FILE_NAME, 'w')
+            f.write("{}")
+            f.close()
 
 
 if __name__ == "__main__":
