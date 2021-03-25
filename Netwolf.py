@@ -110,6 +110,7 @@ def free_ride(node_address, node_port, main_address=0, main_port=0):
 
 def find_Wifi_IPv4():
     local_IPv4 = ""
+    global now
 
     try:
         output = subprocess.run(['ipconfig', '/all'], stdout=subprocess.PIPE)
